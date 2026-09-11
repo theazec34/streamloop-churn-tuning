@@ -1,0 +1,196 @@
+{
+  "scoring": "recall",
+  "scoring_justification": "StreamLoop pierde m\u00e1s dinero por un churn no detectado (FN) que por ofrecer retenci\u00f3n innecesaria (FP). Por eso scoring='recall' sobre la clase positiva (Churn=Yes).",
+  "baseline_metrics": {
+    "accuracy": 0.7849538679914834,
+    "precision_churn": 0.6228373702422145,
+    "recall_churn": 0.48128342245989303,
+    "f1_churn": 0.5429864253393665,
+    "roc_auc": 0.8200328089074891,
+    "confusion_matrix": [
+      [
+        926,
+        109
+      ],
+      [
+        194,
+        180
+      ]
+    ],
+    "classification_report": "              precision    recall  f1-score   support\n\n          No       0.83      0.89      0.86      1035\n         Yes       0.62      0.48      0.54       374\n\n    accuracy                           0.78      1409\n   macro avg       0.72      0.69      0.70      1409\nweighted avg       0.77      0.78      0.78      1409\n"
+  },
+  "random_search": {
+    "best_score_cv": 0.7732441471571907,
+    "best_params": {
+      "classifier__n_estimators": 200,
+      "classifier__min_samples_split": 10,
+      "classifier__min_samples_leaf": 8,
+      "classifier__max_features": "log2",
+      "classifier__max_depth": 10,
+      "classifier__class_weight": "balanced_subsample",
+      "classifier__bootstrap": false
+    },
+    "n_iter": 25,
+    "cv": 5
+  },
+  "grid_search": {
+    "best_score_cv": 0.8040133779264215,
+    "best_params": {
+      "classifier__bootstrap": false,
+      "classifier__class_weight": "balanced_subsample",
+      "classifier__max_depth": 5,
+      "classifier__max_features": "log2",
+      "classifier__min_samples_leaf": 4,
+      "classifier__min_samples_split": 5,
+      "classifier__n_estimators": 100
+    },
+    "param_grid": {
+      "classifier__n_estimators": [
+        100,
+        200,
+        300
+      ],
+      "classifier__max_depth": [
+        5,
+        10,
+        15
+      ],
+      "classifier__min_samples_split": [
+        5,
+        10,
+        20
+      ],
+      "classifier__min_samples_leaf": [
+        4,
+        8
+      ],
+      "classifier__max_features": [
+        "log2"
+      ],
+      "classifier__class_weight": [
+        "balanced_subsample"
+      ],
+      "classifier__bootstrap": [
+        false
+      ]
+    },
+    "cv": 5
+  },
+  "final_selection": {
+    "params": {
+      "classifier__bootstrap": false,
+      "classifier__class_weight": "balanced_subsample",
+      "classifier__max_depth": 5,
+      "classifier__max_features": "log2",
+      "classifier__min_samples_leaf": 4,
+      "classifier__min_samples_split": 10,
+      "classifier__n_estimators": 100
+    },
+    "mean_test_score": 0.8013377926421406,
+    "std_test_score": 0.013141727561463869,
+    "rank_test_score": 2,
+    "rationale": "Entre los mejores por recall medio en CV, se eligi\u00f3 la configuraci\u00f3n con menor desviaci\u00f3n est\u00e1ndar entre folds (m\u00e1s estable), siempre que la media no baje m\u00e1s de 0.01 respecto al mejor promedio.",
+    "top5": [
+      {
+        "mean_test_score": 0.8040133779264215,
+        "std_test_score": 0.016735780606283338,
+        "rank_test_score": 1,
+        "params": {
+          "classifier__bootstrap": false,
+          "classifier__class_weight": "balanced_subsample",
+          "classifier__max_depth": 5,
+          "classifier__max_features": "log2",
+          "classifier__min_samples_leaf": 4,
+          "classifier__min_samples_split": 5,
+          "classifier__n_estimators": 100
+        },
+        "cv_lower": 0.7872775973201381
+      },
+      {
+        "mean_test_score": 0.8013377926421406,
+        "std_test_score": 0.013141727561463869,
+        "rank_test_score": 2,
+        "params": {
+          "classifier__bootstrap": false,
+          "classifier__class_weight": "balanced_subsample",
+          "classifier__max_depth": 5,
+          "classifier__max_features": "log2",
+          "classifier__min_samples_leaf": 4,
+          "classifier__min_samples_split": 10,
+          "classifier__n_estimators": 100
+        },
+        "cv_lower": 0.7881960650806766
+      },
+      {
+        "mean_test_score": 0.8013377926421406,
+        "std_test_score": 0.015913548165043895,
+        "rank_test_score": 2,
+        "params": {
+          "classifier__bootstrap": false,
+          "classifier__class_weight": "balanced_subsample",
+          "classifier__max_depth": 5,
+          "classifier__max_features": "log2",
+          "classifier__min_samples_leaf": 8,
+          "classifier__min_samples_split": 20,
+          "classifier__n_estimators": 300
+        },
+        "cv_lower": 0.7854242444770967
+      },
+      {
+        "mean_test_score": 0.8013377926421406,
+        "std_test_score": 0.016053511705685607,
+        "rank_test_score": 2,
+        "params": {
+          "classifier__bootstrap": false,
+          "classifier__class_weight": "balanced_subsample",
+          "classifier__max_depth": 5,
+          "classifier__max_features": "log2",
+          "classifier__min_samples_leaf": 4,
+          "classifier__min_samples_split": 5,
+          "classifier__n_estimators": 300
+        },
+        "cv_lower": 0.785284280936455
+      },
+      {
+        "mean_test_score": 0.8013377926421406,
+        "std_test_score": 0.016053511705685607,
+        "rank_test_score": 2,
+        "params": {
+          "classifier__bootstrap": false,
+          "classifier__class_weight": "balanced_subsample",
+          "classifier__max_depth": 5,
+          "classifier__max_features": "log2",
+          "classifier__min_samples_leaf": 4,
+          "classifier__min_samples_split": 20,
+          "classifier__n_estimators": 300
+        },
+        "cv_lower": 0.785284280936455
+      }
+    ]
+  },
+  "used_best_estimator": false,
+  "tuned_metrics": {
+    "accuracy": 0.7317246273953159,
+    "precision_churn": 0.49658703071672355,
+    "recall_churn": 0.7780748663101604,
+    "f1_churn": 0.60625,
+    "roc_auc": 0.8369720220103851,
+    "confusion_matrix": [
+      [
+        740,
+        295
+      ],
+      [
+        83,
+        291
+      ]
+    ],
+    "classification_report": "              precision    recall  f1-score   support\n\n          No       0.90      0.71      0.80      1035\n         Yes       0.50      0.78      0.61       374\n\n    accuracy                           0.73      1409\n   macro avg       0.70      0.75      0.70      1409\nweighted avg       0.79      0.73      0.75      1409\n"
+  },
+  "delta_recall": 0.2967914438502674,
+  "delta_precision": -0.12625033952549097,
+  "delta_f1": 0.06326357466063348,
+  "train_size": 5634,
+  "test_size": 1409,
+  "random_state": 42
+}
