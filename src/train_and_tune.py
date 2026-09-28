@@ -1,23 +1,17 @@
-"""
-StreamLoop – Ajuste sistemático del modelo de cancelación (churn).
+"""Reproduce the StreamLoop churn-model tuning study.
 
-Flujo:
-1. Carga + limpieza mínima
-2. Train/test split (antes de cualquier otra operación)
-3. Pipeline (preprocesado + clasificador) → baseline
-4. RandomizedSearchCV (exploración amplia)
-5. GridSearchCV (refinado local)
-6. Selección final por media y estabilidad en CV
-7. Evaluación única en test del modelo ajustado
+The holdout set is created before learned preprocessing. Model search and
+candidate selection use only the training partition.
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
-import warnings
 from pathlib import Path
+from urllib.request import Request, urlopen
 
-import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
@@ -35,55 +29,83 @@ from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-warnings.filterwarnings("ignore")
-
 DATA_URL = (
     "https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/"
     "master/data/Telco-Customer-Churn.csv"
 )
+DATA_SHA256 = "16320c9c1ec72448db59aa0a26a0b95401046bef5d02fd3aeb906448e3055e91"
 RANDOM_STATE = 42
 ARTIFACTS = Path(__file__).resolve().parents[1] / "artifacts"
-ARTIFACTS.mkdir(parents=True, exist_ok=True)
+
+NUMERIC_FEATURES = ["tenure", "MonthlyCharges", "TotalCharges", "SeniorCitizen"]
+CATEGORICAL_FEATURES = [
+    "gender",
+    "Partner",
+    "Dependents",
+    "PhoneService",
+    "MultipleLines",
+    "InternetService",
+    "OnlineSecurity",
+    "OnlineBackup",
+    "DeviceProtection",
+    "TechSupport",
+    "StreamingTV",
+    "StreamingMovies",
+    "Contract",
+    "PaperlessBilling",
+    "PaymentMethod",
+]
 
 
-def load_and_clean(url: str = DATA_URL) -> tuple[pd.DataFrame, pd.Series]:
-    """Carga el CSV y aplica limpieza mínima (sin imputar ni escalar)."""
-    df = pd.read_csv(url)
+def _download_verified_dataset() -> io.BytesIO:
+    """Download the public sample data and reject unexpected content."""
+    request = Request(DATA_URL, headers={"User-Agent": "streamloop-portfolio/0.1"})
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed HTTPS URL
+        content = response.read()
 
-    # ID no es predictivo
+    digest = hashlib.sha256(content).hexdigest()
+    if digest != DATA_SHA256:
+        raise ValueError(
+            "Dataset checksum mismatch. The upstream file may have changed; "
+            "review it before updating DATA_SHA256."
+        )
+    return io.BytesIO(content)
+
+
+def load_and_clean(
+    source: str | Path | io.StringIO | io.BytesIO | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Load data and perform non-learned, row-independent cleaning.
+
+    Passing ``None`` downloads the known public sample and verifies its checksum.
+    A local path or in-memory stream is accepted to support tests and offline use.
+    """
+    df = pd.read_csv(_download_verified_dataset() if source is None else source)
+    required_columns = set(NUMERIC_FEATURES + CATEGORICAL_FEATURES + ["Churn"])
+    missing_columns = sorted(required_columns - set(df.columns))
+    if missing_columns:
+        raise ValueError(f"Dataset is missing required columns: {missing_columns}")
+
+    # The pseudonymous identifier is not a useful feature and could enable
+    # memorisation or accidental disclosure.
     if "customerID" in df.columns:
         df = df.drop(columns=["customerID"])
 
-    # TotalCharges llega como object con strings vacíos
+    # Blank TotalCharges values become missing and are imputed inside the pipeline.
     df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
 
-    # Target binario: Yes=1 (churn), No=0
-    y = df["Churn"].map({"Yes": 1, "No": 0}).astype(int)
+    mapped_target = df["Churn"].map({"Yes": 1, "No": 0})
+    if mapped_target.isna().any():
+        unexpected = sorted(df.loc[mapped_target.isna(), "Churn"].astype(str).unique())
+        raise ValueError(f"Unexpected Churn labels: {unexpected}")
+
+    y = mapped_target.astype(int)
     X = df.drop(columns=["Churn"])
     return X, y
 
 
 def build_pipeline() -> Pipeline:
-    """Pipeline completo: preprocesado + RandomForest (defaults)."""
-    numeric_features = ["tenure", "MonthlyCharges", "TotalCharges", "SeniorCitizen"]
-    categorical_features = [
-        "gender",
-        "Partner",
-        "Dependents",
-        "PhoneService",
-        "MultipleLines",
-        "InternetService",
-        "OnlineSecurity",
-        "OnlineBackup",
-        "DeviceProtection",
-        "TechSupport",
-        "StreamingTV",
-        "StreamingMovies",
-        "Contract",
-        "PaperlessBilling",
-        "PaymentMethod",
-    ]
-
+    """Build preprocessing plus a default random-forest classifier."""
     numeric_transformer = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
@@ -99,8 +121,8 @@ def build_pipeline() -> Pipeline:
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_transformer, numeric_features),
-            ("cat", categorical_transformer, categorical_features),
+            ("num", numeric_transformer, NUMERIC_FEATURES),
+            ("cat", categorical_transformer, CATEGORICAL_FEATURES),
         ]
     )
 
@@ -116,7 +138,7 @@ def build_pipeline() -> Pipeline:
 
 
 def evaluate(model, X_test, y_test) -> dict:
-    """Métricas alineadas al negocio (recall de churn es prioritaria)."""
+    """Return holdout metrics, including positive-class precision and recall."""
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
     return {
@@ -133,7 +155,7 @@ def evaluate(model, X_test, y_test) -> dict:
 
 
 def cv_stability_table(search) -> pd.DataFrame:
-    """Tabla de candidatos ordenados por media CV y con std (estabilidad)."""
+    """Sort candidates by mean cross-validation recall and variability."""
     results = pd.DataFrame(search.cv_results_)
     cols = [
         "mean_test_score",
@@ -150,10 +172,7 @@ def cv_stability_table(search) -> pd.DataFrame:
 
 
 def pick_stable_candidate(search) -> dict:
-    """
-    Elige entre los top-5 por mean_test_score el de menor std_test_score.
-    Preferimos estabilidad si la media no cae más de 0.01 respecto al mejor.
-    """
+    """Choose the lowest-variance top-five candidate within 0.01 of the best."""
     table = cv_stability_table(search).head(5).reset_index(drop=True)
     best_mean = table.loc[0, "mean_test_score"]
     candidates = table[table["mean_test_score"] >= best_mean - 0.01]
@@ -164,20 +183,20 @@ def pick_stable_candidate(search) -> dict:
         "std_test_score": float(chosen["std_test_score"]),
         "rank_test_score": int(chosen["rank_test_score"]),
         "rationale": (
-            "Entre los mejores por recall medio en CV, se eligió la configuración "
-            "con menor desviación estándar entre folds (más estable), siempre que "
-            "la media no baje más de 0.01 respecto al mejor promedio."
+            "Among the leading mean CV-recall candidates, choose the lowest "
+            "fold-to-fold standard deviation when mean recall is within 0.01 "
+            "of the best score."
         ),
         "top5": table.to_dict(orient="records"),
     }
 
 
 def main() -> None:
-    print("=== 1. Carga y limpieza mínima ===")
+    print("=== 1. Load and minimally clean data ===")
     X, y = load_and_clean()
-    print(f"Filas: {len(X)} | Features: {X.shape[1]} | Churn rate: {y.mean():.3f}")
+    print(f"Rows: {len(X)} | Features: {X.shape[1]} | Churn rate: {y.mean():.3f}")
 
-    print("\n=== 2. Train/test split (antes de cualquier otra operación) ===")
+    print("\n=== 2. Train/test split before learned preprocessing ===")
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
@@ -187,7 +206,7 @@ def main() -> None:
     )
     print(f"Train: {len(X_train)} | Test: {len(X_test)}")
 
-    print("\n=== 3. Baseline (hiperparámetros por defecto) ===")
+    print("\n=== 3. Baseline (default hyperparameters) ===")
     baseline = build_pipeline()
     baseline.fit(X_train, y_train)
     baseline_metrics = evaluate(baseline, X_test, y_test)
@@ -198,10 +217,10 @@ def main() -> None:
         f"accuracy={baseline_metrics['accuracy']:.4f}"
     )
 
-    # Scoring de negocio: maximizar recall de la clase Churn=Yes
+    # Business scoring: maximise recall for the positive (churn) class.
     scoring = "recall"
 
-    print("\n=== 4. RandomizedSearchCV (exploración amplia) ===")
+    print("\n=== 4. RandomizedSearchCV (broad search) ===")
     random_pipe = build_pipeline()
     random_param_distributions = {
         "classifier__n_estimators": [100, 200, 300, 400],
@@ -223,12 +242,12 @@ def main() -> None:
         refit=True,
         verbose=1,
     )
-    # IMPORTANTE: solo sobre train; el test no se toca aquí
+    # Search sees training data only; the holdout set is not passed here.
     random_search.fit(X_train, y_train)
-    print(f"Mejor recall CV (random): {random_search.best_score_:.4f}")
-    print(f"Mejores params (random): {random_search.best_params_}")
+    print(f"Best randomized-search CV recall: {random_search.best_score_:.4f}")
+    print(f"Best randomized-search parameters: {random_search.best_params_}")
 
-    print("\n=== 5. GridSearchCV (refinado alrededor de la zona prometedora) ===")
+    print("\n=== 5. GridSearchCV (local refinement) ===")
     bp = random_search.best_params_
 
     def neighbors_int(value, options, pad=1):
@@ -275,23 +294,21 @@ def main() -> None:
         refit=True,
         verbose=1,
     )
-    # IMPORTANTE: solo sobre train
+    # Grid search also sees training data only.
     grid_search.fit(X_train, y_train)
-    print(f"Mejor recall CV (grid): {grid_search.best_score_:.4f}")
-    print(f"Mejores params (grid): {grid_search.best_params_}")
+    print(f"Best grid-search CV recall: {grid_search.best_score_:.4f}")
+    print(f"Best grid-search parameters: {grid_search.best_params_}")
 
-    print("\n=== 6. Análisis de estabilidad en cv_results_ ===")
+    print("\n=== 6. Inspect variation across CV folds ===")
     selection = pick_stable_candidate(grid_search)
     print(
-        f"Candidato estable: mean={selection['mean_test_score']:.4f} "
+        f"Selected candidate: mean={selection['mean_test_score']:.4f} "
         f"std={selection['std_test_score']:.4f} rank={selection['rank_test_score']}"
     )
-    print(f"Params elegidos: {selection['params']}")
+    print(f"Selected parameters: {selection['params']}")
 
-    # best_estimator_ de GridSearchCV ya está reentrenado (refit=True).
-    # Si el candidato estable coincide con best_params_, usamos best_estimator_.
-    # Si no, reentrenamos UNA vez con esos params sobre todo el train
-    # (no es reentrenar best_estimator_ a mano tras el search; es otra config).
+    # GridSearchCV has already refitted best_estimator_. If the stability rule
+    # selects another configuration, fit that configuration on all training data.
     if selection["params"] == grid_search.best_params_:
         final_model = grid_search.best_estimator_
         used_best_estimator = True
@@ -301,7 +318,7 @@ def main() -> None:
         final_model.fit(X_train, y_train)
         used_best_estimator = False
 
-    print("\n=== 7. Evaluación final en test (única vez) ===")
+    print("\n=== 7. Final holdout evaluation ===")
     tuned_metrics = evaluate(final_model, X_test, y_test)
     print(
         f"Tuned recall_churn={tuned_metrics['recall_churn']:.4f} "
@@ -313,9 +330,9 @@ def main() -> None:
     summary = {
         "scoring": scoring,
         "scoring_justification": (
-            "StreamLoop pierde más dinero por un churn no detectado (FN) que por "
-            "ofrecer retención innecesaria (FP). Por eso scoring='recall' sobre la "
-            "clase positiva (Churn=Yes)."
+            "The scenario assumes a missed churner (false negative) costs more "
+            "than an unnecessary retention contact (false positive), so search "
+            "optimises recall for the positive churn class."
         ),
         "baseline_metrics": baseline_metrics,
         "random_search": {
@@ -345,11 +362,11 @@ def main() -> None:
         "random_state": RANDOM_STATE,
     }
 
-    # Serializar params (pueden contener None)
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
     out_path = ARTIFACTS / "metrics_summary.json"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, default=str)
-    print(f"\nResumen guardado en {out_path}")
+    print(f"\nSummary written to {out_path}")
 
 
 if __name__ == "__main__":

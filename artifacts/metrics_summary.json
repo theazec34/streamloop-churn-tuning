@@ -1,6 +1,6 @@
 {
   "scoring": "recall",
-  "scoring_justification": "StreamLoop pierde m\u00e1s dinero por un churn no detectado (FN) que por ofrecer retenci\u00f3n innecesaria (FP). Por eso scoring='recall' sobre la clase positiva (Churn=Yes).",
+  "scoring_justification": "The scenario assumes a missed churner (false negative) costs more than an unnecessary retention contact (false positive), so search optimises recall for the positive churn class.",
   "baseline_metrics": {
     "accuracy": 0.7849538679914834,
     "precision_churn": 0.6228373702422145,
@@ -89,7 +89,7 @@
     "mean_test_score": 0.8013377926421406,
     "std_test_score": 0.013141727561463869,
     "rank_test_score": 2,
-    "rationale": "Entre los mejores por recall medio en CV, se eligi\u00f3 la configuraci\u00f3n con menor desviaci\u00f3n est\u00e1ndar entre folds (m\u00e1s estable), siempre que la media no baje m\u00e1s de 0.01 respecto al mejor promedio.",
+    "rationale": "Among the leading mean CV-recall candidates, choose the lowest fold-to-fold standard deviation when mean recall is within 0.01 of the best score.",
     "top5": [
       {
         "mean_test_score": 0.8040133779264215,

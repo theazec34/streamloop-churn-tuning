@@ -1,13 +1,12 @@
 {
   "title": {
     "us": "StreamLoop – Tuning the Churn Model",
-    "es": "StreamLoop – Ajustando el Modelo de Cancelación"
+    "es": "StreamLoop – Tuning the Churn Model"
   },
   "description": {
     "us": "Systematic hyperparameter tuning for a churn classifier using Pipeline, RandomizedSearchCV and GridSearchCV.",
-    "es": "Ajuste sistemático de hiperparámetros para un clasificador de churn con Pipeline, RandomizedSearchCV y GridSearchCV."
+    "es": "Systematic hyperparameter tuning for a churn classifier using Pipeline, RandomizedSearchCV and GridSearchCV."
   },
-  "preview": "https://github.com/4GeeksAcademy/python-hello",
   "technologies": ["python", "scikit-learn", "pandas", "machine-learning"],
   "difficulty": "intermediate"
 }

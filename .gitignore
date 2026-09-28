@@ -12,6 +12,7 @@ venv/
 dist/
 build/
 .pytest_cache/
+.ruff_cache/
 .mypy_cache/
 artifacts/*.pkl
 .cache/

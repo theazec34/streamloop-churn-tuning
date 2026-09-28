@@ -1,58 +1,72 @@
-# Informe de ajuste de hiperparámetros — StreamLoop
+# StreamLoop tuning report
 
-## Contexto
+## Question
 
-Clasificador binario de churn para StreamLoop. El coste de un **falso negativo** (cliente que cancela sin ser detectado) es mayor que el de un **falso positivo** (oferta de retención innecesaria). Por eso la búsqueda optimiza **`recall` de la clase `Churn=Yes`**, no accuracy.
+Under the fictional StreamLoop scenario, a missed churner is assumed to cost
+more than an unnecessary retention contact. The model search therefore
+optimises positive-class **recall**, not accuracy. No monetary cost data was
+provided, so this is an explicit modelling assumption rather than a measured
+business fact.
 
-## Datos y partición
+## Data and split
 
-| Concepto | Valor |
+| Item | Value |
 |----------|-------|
-| Fuente | Telco Customer Churn (IBM) |
-| Filas | 7 043 |
-| Features | 19 (tras quitar `customerID`) |
-| Tasa de churn | ~26.5 % |
-| Train / Test | 5 634 / 1 409 (80/20, estratificado, `random_state=42`) |
+| Source | IBM Telco Customer Churn public sample |
+| Rows | 7,043 |
+| Features | 19 after removing `customerID` |
+| Churn rate | about 26.5% |
+| Train / test | 5,634 / 1,409 (80/20, stratified, `random_state=42`) |
 
-Limpieza mínima fuera del pipeline: eliminar `customerID`, convertir `TotalCharges` a numérico (`errors="coerce"`) y mapear `Churn` a `{Yes:1, No:0}`.
+Only row-independent parsing happens before the split: remove `customerID`,
+convert `TotalCharges` to numeric, and map `Churn` to `{Yes: 1, No: 0}`.
+Median imputation, scaling, and one-hot encoding remain inside a
+`ColumnTransformer` and `Pipeline`. This means each CV fold learns those values
+from its training fold only; validation and holdout rows cannot leak into them.
 
-Imputación, escalado y one-hot encoding viven **dentro** del `Pipeline` vía `ColumnTransformer`.
+The holdout set is not passed to either search. It is inspected for the
+baseline and the final selected model.
 
-## Métrica de scoring
+## Search metric
 
 ```text
-scoring = "recall"   # clase positiva = Churn
+scoring = "recall"  # positive class = churn
 ```
 
-**Justificación:** maximizar la detección de cancelaciones reduce el coste de negocio dominante (FN). Accuracy por defecto de scikit-learn habría favorecido la clase mayoritaria (`No`) y ocultado un recall de churn bajo.
+Recall measures the share of actual churners detected. Precision measures the
+share of flagged customers who actually churn. Accuracy alone can obscure poor
+churn recall because `No` is the majority class.
 
-## Baseline (defaults)
+## Default baseline
 
-`Pipeline(preprocessor, RandomForestClassifier(random_state=42))` sin tuning. Evaluación en test **una sola vez**:
+The baseline is
+`Pipeline(preprocessor, RandomForestClassifier(random_state=42))` with the
+classifier defaults.
 
-| Métrica | Valor |
+| Metric | Value |
 |---------|-------|
 | Recall (Churn) | **0.481** |
 | Precision (Churn) | 0.623 |
 | F1 (Churn) | 0.543 |
 | Accuracy | 0.785 |
 | ROC-AUC | 0.820 |
-| Matriz de confusión `[[TN, FP], [FN, TP]]` | `[[926, 109], [194, 180]]` |
+| Confusion matrix `[[TN, FP], [FN, TP]]` | `[[926, 109], [194, 180]]` |
 
-El accuracy parece razonable, pero **casi la mitad de los churners escapan** (194 FN). Eso confirma que accuracy no es la métrica adecuada.
+The 0.785 accuracy masks 194 missed churners and a churn recall of 0.481.
 
-## Búsqueda — fase 1: `RandomizedSearchCV`
+## Stage 1: `RandomizedSearchCV`
 
-- Espacio amplio: `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`, `class_weight`, `bootstrap`
+- Broad search over tree count, depth, split and leaf sizes, feature sampling,
+  class weighting, and bootstrap behaviour
 - `n_iter=25`, `cv=5`, `n_jobs=-1`, `refit=True`, `scoring="recall"`
-- **Solo sobre train** (el test no participa)
+- Training partition only
 
-| Resultado | Valor |
+| Result | Value |
 |-----------|-------|
-| Mejor recall CV | **0.773** |
-| Hallazgo clave | `class_weight='balanced_subsample'` y árboles no demasiado profundos |
+| Best mean CV recall | **0.773** |
+| Selected region | `class_weight='balanced_subsample'`, moderate tree depth |
 
-Mejores hiperparámetros (random):
+Best random-search parameters:
 
 ```python
 {
@@ -66,30 +80,32 @@ Mejores hiperparámetros (random):
 }
 ```
 
-## Búsqueda — fase 2: `GridSearchCV`
+## Stage 2: `GridSearchCV`
 
-Se acotó la malla alrededor de la zona encontrada por el random search (vecinos de `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`; se fijaron `max_features`, `class_weight` y `bootstrap`).
+The grid refines neighbouring integer values around the random-search result
+while holding `max_features`, `class_weight`, and `bootstrap` fixed.
 
-| Resultado | Valor |
+| Result | Value |
 |-----------|-------|
-| Mejor recall CV (rank 1) | **0.804** (std ≈ 0.017) |
-| Candidato estable elegido (rank 2) | **0.801** (std ≈ 0.013) |
+| Best mean CV recall (rank 1) | **0.804** (std about 0.017) |
+| Stability-rule choice (rank 2) | **0.801** (std about 0.013) |
 
-### Inspección de `cv_results_` (top candidatos)
+### Leading `cv_results_` candidates
 
-| Rank | mean recall CV | std | Comentario |
+| Rank | Mean CV recall | Std | Note |
 |------|----------------|-----|------------|
-| 1 | 0.8040 | 0.0167 | Mejor media |
-| 2 | 0.8013 | **0.0131** | Media casi igual, **más estable** |
-| 2 | 0.8013 | 0.0159 | Similar media, más varianza |
+| 1 | 0.8040 | 0.0167 | Highest mean |
+| 2 | 0.8013 | **0.0131** | Similar mean, lower variation |
+| 2 | 0.8013 | 0.0159 | Similar mean, higher variation |
 
-## Modelo final elegido
+## Final candidate
 
-Se eligió el candidato **rank 2** (media 0.8013, std 0.0131) frente al rank 1 (0.8040 / 0.0167):
+The predeclared code rule considers the five leading candidates within 0.01
+recall of the best, then chooses the lowest standard deviation. It selects rank
+2 (mean 0.8013, std 0.0131) instead of rank 1 (0.8040, std 0.0167).
 
-- La diferencia de media es **&lt; 0.01**
-- La desviación entre folds es menor → comportamiento más predecible en producción
-- Hiperparámetros finales:
+This is a reasonable preference for this exercise, but lower variation across
+five folds does not establish production stability. Final parameters:
 
 ```python
 {
@@ -103,29 +119,39 @@ Se eligió el candidato **rank 2** (media 0.8013, std 0.0131) frente al rank 1 (
 }
 ```
 
-`GridSearchCV` se ejecutó con `refit=True`. El estimador final usa la configuración estable seleccionada tras revisar `cv_results_` (no se reentrenó a mano el `best_estimator_` del rank 1; se ajustó la configuración elegida una vez sobre todo el train).
+`GridSearchCV` uses `refit=True`. Because the rule selects a different
+configuration from `best_estimator_`, that selected configuration is fitted
+once on all training rows.
 
-## Evaluación final en test (única vez)
+## Holdout comparison
 
-| Métrica | Baseline | Ajustado | Δ |
+| Metric | Baseline | Tuned | Change |
 |---------|----------|----------|---|
 | Recall (Churn) | 0.481 | **0.778** | **+0.297** |
 | Precision (Churn) | 0.623 | 0.497 | −0.126 |
 | F1 (Churn) | 0.543 | **0.606** | **+0.063** |
 | Accuracy | 0.785 | 0.732 | −0.053 |
 | ROC-AUC | 0.820 | **0.837** | **+0.017** |
-| FN (churn no detectado) | 194 | **83** | **−111** |
-| FP (retención innecesaria) | 109 | 295 | +186 |
+| False negatives | 194 | **83** | **-111** |
+| False positives | 109 | 295 | +186 |
 
-Matriz del modelo ajustado: `[[740, 295], [83, 291]]`.
+Tuned confusion matrix: `[[740, 295], [83, 291]]`.
 
-## Trade-offs
+## Interpretation
 
-1. **Recall ↑ / Precision ↓:** esperado y deseable bajo la lógica de StreamLoop: preferimos contactar de más a clientes en riesgo que dejar escapar cancelaciones.
-2. **Accuracy ↓:** engañosa aquí; la clase mayoritaria (`No`) es más fácil de acertar. Un accuracy más bajo con muchos menos FN es un mejor resultado de negocio.
-3. **Estabilidad vs máximo CV:** se sacrificaron ~0.3 pp de recall CV a cambio de menor varianza entre folds.
-4. **Coste computacional:** random (amplio, barato) → grid (estrecho, preciso). No se gastó presupuesto en una grid enorme desde el inicio.
+The tuned model raises churn recall by about 29.7 percentage points and reduces
+false negatives by 111. It also lowers precision by about 12.6 points and adds
+186 false positives. That trade-off matches the stated assumption, but calling
+it “acceptable” would require costs and operational capacity that this project
+does not have.
 
-## Conclusión
+## Limitations
 
-El proceso sistemático (baseline → random → grid → revisión de estabilidad) eleva el recall de churn de **0.48 a 0.78** y reduce los falsos negativos de **194 a 83** en el test set, con un trade-off de precisión aceptable para la prioridad de negocio de StreamLoop.
+- Results come from one random holdout split of a public teaching dataset.
+- Random rather than temporal splitting may not reflect future-customer drift.
+- Search uses a limited parameter budget and the default 0.5 threshold.
+- No confidence interval, calibration, fairness, uplift, or retention experiment
+  is reported.
+- Demographic and relationship fields can be sensitive or act as proxies.
+- The holdout comparison supports this retrospective study, not a deployment
+  claim.
